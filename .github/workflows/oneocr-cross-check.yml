@@ -102,7 +102,7 @@ jobs:
       - name: Resolve and validate inputs
         shell: pwsh
         env:
-          REQUEST_DOCUMENT: ${{ inputs.document_path || '20260821_test/★의견서(2072. 화성산업진흥원 업무용 차량 임차).hwpx' }}
+          REQUEST_DOCUMENT: ${{ inputs.document_path || 'cases/20000101_example/source/example.hwpx' }}
           REQUEST_SOURCE_MD: ${{ inputs.source_markdown || '' }}
           REQUEST_DPI: ${{ inputs.dpi || '220' }}
         run: |
