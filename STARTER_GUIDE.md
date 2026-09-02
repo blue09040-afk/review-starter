@@ -9,6 +9,12 @@
 - 자신의 `m1` 저장소와 함께 사용하는 것을 권장합니다.
 - 복제 이후 원본 `review`와 자동 동기화하지 않습니다.
 
+## 복제 방법
+
+1. 이 저장소가 GitHub Template Repository로 설정되어 있으면 `Use this template`로 자신의 **Private** 저장소를 만듭니다.
+2. 일반적으로 기본 브랜치만 복제하면 충분합니다. 검증용·임시 브랜치를 함께 가져올 필요는 없습니다.
+3. 새 저장소에서 아래 `권장 첫 점검`을 수행한 뒤 실제 사건 폴더를 추가합니다.
+
 ## 포함된 자동화
 
 - `Extract Documents to Markdown`: HWP/HWPX/ODT/PDF/이미지 → Markdown 자동 추출
