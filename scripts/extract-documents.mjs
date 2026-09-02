@@ -1,10 +1,13 @@
 import { execFileSync } from "node:child_process"
 import { mkdir, mkdtemp, readdir, readFile, rename, rm, unlink, writeFile } from "node:fs/promises"
 import path from "node:path"
+import { pathToFileURL } from "node:url"
 import { parse } from "kordoc"
 
 const ROOT = process.cwd()
-const KORDOC_VERSION = "4.12.0"
+export const KORDOC_VERSION = JSON.parse(
+  await readFile(new URL("../package.json", import.meta.url), "utf8"),
+).dependencies.kordoc
 const AUTO_MARKER = "<!-- AUTO-GENERATED: review document extraction. DO NOT EDIT DIRECTLY. -->"
 const SOURCE_EXTS = new Set([".hwp", ".hwpx", ".odt", ".pdf", ".jpg", ".jpeg", ".png"])
 const IMAGE_EXTS = new Set([".jpg", ".jpeg", ".png"])
@@ -83,7 +86,22 @@ function normalizeForDuplicateCheck(text) {
     .trim()
 }
 
-async function ocrPdfImages(parsed, mainMarkdown) {
+export function detectSuspiciousOdtText(markdown) {
+  const hangul = String(markdown ?? "").match(/[가-힣]/gu) ?? []
+  if (hangul.length < 80) return null
+
+  const counts = new Map()
+  for (const syllable of hangul) counts.set(syllable, (counts.get(syllable) ?? 0) + 1)
+  const dominant = [...counts.values()].sort((a, b) => b - a).slice(0, 2)
+  const dominantRatio = dominant.reduce((sum, count) => sum + count, 0) / hangul.length
+
+  if (counts.size <= 8 && dominantRatio >= 0.85) {
+    return `ODT 변환 결과의 한글 ${hangul.length}자가 ${counts.size}개 음절에 비정상적으로 집중되어 텍스트 손상이 의심됩니다.`
+  }
+  return null
+}
+
+async function ocrEmbeddedImages(parsed, mainMarkdown) {
   const images = parsed.images ?? []
   if (!images.length) return { sections: [], attempted: 0, included: 0, failed: 0 }
 
@@ -139,20 +157,17 @@ function extractionHeader(source, parsed, imageOcr, pdfOcrUsed) {
     `- 원본 형식: \`${ext.slice(1).toUpperCase()}\``,
   ]
 
-  if (ext === ".pdf" || ext === ".odt") {
-    if (ext === ".odt") {
-      lines.push(`- ODT 처리: LibreOffice headless로 임시 PDF 렌더링 후 Kordoc 텍스트 레이어 우선 추출${pdfOcrUsed ? " + OCR 필요 페이지만 PP-OCRv5 보강" : " (OCR 필요 신호 없음)"}`)
-      lines.push(`- ODT 렌더링 PDF 내부 이미지 OCR: ${imageOcr.attempted}개 시도 / ${imageOcr.included}개 결과 포함 / ${imageOcr.failed}개 실패`)
-    } else {
-      lines.push(`- PDF 처리: 텍스트 레이어 우선${pdfOcrUsed ? " + OCR 필요 페이지만 PP-OCRv5 보강" : " (OCR 필요 신호 없음)"}`)
-      lines.push(`- PDF 내부 이미지 OCR: ${imageOcr.attempted}개 시도 / ${imageOcr.included}개 결과 포함 / ${imageOcr.failed}개 실패`)
-    }
+  if (ext === ".pdf") {
+    lines.push(`- PDF 처리: 텍스트 레이어 우선${pdfOcrUsed ? " + OCR 필요 페이지만 PP-OCRv5 보강" : " (OCR 필요 신호 없음)"}`)
+    lines.push(`- PDF 내부 이미지 OCR: ${imageOcr.attempted}개 시도 / ${imageOcr.included}개 결과 포함 / ${imageOcr.failed}개 실패`)
     if (parsed.qualitySummary) {
       const q = parsed.qualitySummary
-      const qualityLabel = ext === ".odt" ? "ODT 렌더링 PDF 품질 신호" : "PDF 품질 신호"
-      lines.push(`- ${qualityLabel}: ${q.needsOcr ? "OCR 필요 페이지 있음" : "문서 단위 OCR 필요 신호 없음"}`)
+      lines.push(`- PDF 품질 신호: ${q.needsOcr ? "OCR 필요 페이지 있음" : "문서 단위 OCR 필요 신호 없음"}`)
       if (q.ocrCandidatePages?.length) lines.push(`- OCR 후보 페이지: ${q.ocrCandidatePages.join(", ")}`)
     }
+  } else if (ext === ".odt") {
+    lines.push("- ODT 처리: LibreOffice headless로 임시 DOCX 변환 후 Kordoc DOCX 직접 파싱")
+    lines.push(`- ODT 변환 DOCX 내부 이미지 OCR: ${imageOcr.attempted}개 시도 / ${imageOcr.included}개 결과 포함 / ${imageOcr.failed}개 실패`)
   } else if (ext === ".hwp") {
     lines.push("- HWP 처리: kordoc HWP3/HWP5 직접 파싱")
   } else if (ext === ".hwpx") {
@@ -164,7 +179,7 @@ function extractionHeader(source, parsed, imageOcr, pdfOcrUsed) {
   lines.push("", "## 주의사항", "")
   lines.push("- 이 파일은 AI 검토 편의를 위한 자동 파생자료이며 원본·공식기록을 대체하지 않습니다.")
   lines.push("- 표 병합, 글상자, 도형, 배치, 페이지 경계 또는 중요 수치가 판단에 영향을 주면 원본을 다시 확인합니다.")
-  if (ext === ".pdf" || ext === ".odt") lines.push("- PDF 내부 이미지에서 판독된 문자는 아래 OCR 보강 섹션에 포함될 수 있습니다.")
+  if (ext === ".pdf" || ext === ".odt") lines.push("- 문서 내부 이미지에서 판독된 문자는 아래 OCR 보강 섹션에 포함될 수 있습니다.")
 
   const warnings = warningLines(parsed)
   if (warnings.length) lines.push("", "## 파서 경고", "", ...warnings)
@@ -215,21 +230,22 @@ async function parsePdfHybrid(source) {
   return { parsed: retried, pdfOcrUsed: true }
 }
 
-async function parseOdtViaPdf(source) {
-  const tempDir = await mkdtemp(path.join(ROOT, ".odt-render-"))
+async function parseOdtViaDocx(source) {
+  const tempDir = await mkdtemp(path.join(ROOT, ".odt-convert-"))
   try {
     execFileSync(
       "libreoffice",
-      ["--headless", "--convert-to", "pdf:writer_pdf_Export", "--outdir", tempDir, source],
+      ["--headless", "--convert-to", "docx:Office Open XML Text", "--outdir", tempDir, source],
       { cwd: ROOT, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
     )
 
-    const renderedPdfs = (await readdir(tempDir)).filter((name) => path.extname(name).toLowerCase() === ".pdf")
-    if (renderedPdfs.length !== 1) {
-      throw new Error(`LibreOffice produced ${renderedPdfs.length} PDF files for ${rel(source)}; expected exactly 1`)
+    const convertedDocx = (await readdir(tempDir)).filter((name) => path.extname(name).toLowerCase() === ".docx")
+    if (convertedDocx.length !== 1) {
+      throw new Error(`LibreOffice produced ${convertedDocx.length} DOCX files for ${rel(source)}; expected exactly 1`)
     }
 
-    return await parsePdfHybrid(path.join(tempDir, renderedPdfs[0]))
+    const parsed = await parse(path.join(tempDir, convertedDocx[0]))
+    return { parsed, pdfOcrUsed: false }
   } finally {
     await rm(tempDir, { recursive: true, force: true })
   }
@@ -270,7 +286,7 @@ async function convertOne(source) {
       parsed = hybrid.parsed
       pdfOcrUsed = hybrid.pdfOcrUsed
     } else if (ext === ".odt") {
-      const hybrid = await parseOdtViaPdf(source)
+      const hybrid = await parseOdtViaDocx(source)
       parsed = hybrid.parsed
       pdfOcrUsed = hybrid.pdfOcrUsed
     } else {
@@ -278,6 +294,13 @@ async function convertOne(source) {
     }
   } catch (error) {
     parsed = { success: false, code: "PARSE_ERROR", error: error instanceof Error ? error.message : String(error) }
+  }
+
+  if (parsed.success && ext === ".odt") {
+    const qualityFailure = detectSuspiciousOdtText(parsed.markdown)
+    if (qualityFailure) {
+      parsed = { success: false, code: "ODT_TEXT_CORRUPTION", error: qualityFailure }
+    }
   }
 
   if (!parsed.success) {
@@ -288,9 +311,9 @@ async function convertOne(source) {
   const markdown = sanitizeImageLinks(parsed.markdown, parsed.images)
   let imageOcr = { sections: [], attempted: 0, included: 0, failed: 0 }
 
-  if (ext === ".pdf" || ext === ".odt") imageOcr = await ocrPdfImages(parsed, markdown)
+  if (ext === ".pdf" || ext === ".odt") imageOcr = await ocrEmbeddedImages(parsed, markdown)
 
-  const appendixTitle = ext === ".odt" ? "ODT 렌더링 PDF 내부 이미지 OCR 보강" : "PDF 내부 이미지 OCR 보강"
+  const appendixTitle = ext === ".odt" ? "ODT 변환 DOCX 내부 이미지 OCR 보강" : "PDF 내부 이미지 OCR 보강"
   const ocrAppendix = imageOcr.sections.length
     ? `\n\n---\n\n## ${appendixTitle}\n\n${imageOcr.sections.join("\n\n")}\n`
     : ""
@@ -352,9 +375,11 @@ async function main() {
 
   console.log(`Documents: ${sources.length}; converted: ${converted}; failed: ${failed}; stale removed: ${staleRemoved}`)
   console.log(`PDF-based documents using selective OCR: ${pdfOcrDocuments}`)
-  console.log(`PDF embedded-image OCR: attempted ${imageAttempts}; included ${imageIncluded}; failed ${imageFailed}`)
+  console.log(`Embedded-image OCR: attempted ${imageAttempts}; included ${imageIncluded}; failed ${imageFailed}`)
 
   if (failed > 0) process.exitCode = 1
 }
 
-await main()
+if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+  await main()
+}

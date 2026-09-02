@@ -25,20 +25,22 @@ HWP, HWPX, ODT, PDF, JPG/JPEG/PNG 원자료는 `source/`에 두는 것을 권장
 
 ## 2. 자동 문서 추출
 
-지원 원자료가 `main` 브랜치에 추가·변경되면 `.github/workflows/extract-documents.yml`이 실행되어 `kordoc` 4.12.0을 중심으로 Markdown 파생본을 생성합니다. ODT는 LibreOffice headless로 임시 PDF를 만든 뒤 기존 PDF 추출 경로를 사용하며, ODT가 있을 때만 LibreOffice Writer를 설치합니다.
+지원 원자료가 `main` 브랜치에 추가·변경되면 `.github/workflows/extract-documents.yml`이 실행되어 `kordoc` 4.12.0을 중심으로 Markdown 파생본을 생성합니다. ODT는 LibreOffice headless로 임시 DOCX로 변환한 뒤 Kordoc DOCX 파서로 직접 읽으며, 한글이 극소수 음절에 비정상적으로 집중되는 결과는 `ODT_TEXT_CORRUPTION` 실패로 차단합니다. ODT가 있을 때만 LibreOffice Writer를 설치합니다.
 
 지원 형식과 기본 처리:
 
 - HWP: Kordoc HWP3/HWP5 직접 파싱
 - HWPX: Kordoc HWPX 직접 파싱
-- ODT: LibreOffice headless로 임시 PDF 렌더링 후 Kordoc PDF 하이브리드 추출
+- ODT: LibreOffice headless로 임시 DOCX 변환 후 Kordoc DOCX 직접 파싱. PDF 텍스트층을 거치지 않으며 한글 붕괴 품질검사를 추가 수행
 - PDF: 텍스트 레이어를 먼저 파싱하고 `needsOcr` 품질 신호가 있는 경우에만 PP-OCRv5로 필요한 페이지만 보강
-- PDF/ODT 렌더링 PDF 내부 이미지: 별도 OCR 후 이미 본문에 있는 텍스트와 중복되지 않는 결과만 보강 섹션에 포함
+- PDF/ODT 내부 이미지: 별도 OCR 후 이미 본문에 있는 텍스트와 중복되지 않는 결과만 보강 섹션에 포함
 - JPG/JPEG/PNG: PP-OCRv5로 직접 OCR
 
 같은 폴더에 확장자만 다른 동일 원본명이 함께 있으면 모든 충돌 파일에 확장자 suffix를 붙입니다. 파일명 결정 규칙의 정본은 `.github/scripts/resolve_extracted_name.py`입니다.
 
 자동 추출본은 원본을 대체하지 않는 파생자료입니다. 원본과 추출본이 충돌하면 원본을 우선하고, 표 병합·글상자·배치·페이지 경계·이미지·중요 수치가 판단에 영향을 줄 수 있으면 원본을 다시 확인합니다. 자동 추출 Markdown은 수동 편집하지 않고 필요한 보정은 `working/`에 별도 파일로 남깁니다.
+
+추출 스크립트·테스트·의존성·workflow가 바뀌면 Actions에서 `npm test`를 실행하여 ODT 한글 붕괴 방지 회귀 테스트를 포함한 추출 회귀 테스트를 먼저 확인합니다.
 
 중요 문서이거나 Kordoc 직접 추출의 누락·배치 이상이 의심되면 `.github/workflows/oneocr-cross-check.yml`을 선택적으로 실행하여 OneOCR로 교차검증할 수 있습니다. 이는 기본 자동 추출을 대체하지 않습니다.
 
@@ -65,7 +67,7 @@ private 저장소라도 조직 정책을 우선합니다. 주민등록번호·�
 
 1. 실패한 workflow run과 실패 단계 확인
 2. 원본 파일 손상·암호화 여부 확인
-3. ODT라면 LibreOffice 설치·PDF 변환 단계 확인
+3. ODT라면 LibreOffice 설치·DOCX 변환 단계와 `ODT_TEXT_CORRUPTION` 품질검사 결과 확인
 4. Kordoc 고정 버전 및 PDF/OCR 선택 의존성 확인
 5. OCR 모델 준비 단계와 품질 경고 확인
 6. 중요한 문서는 필요 시 `OneOCR Cross Check`로 교차검증

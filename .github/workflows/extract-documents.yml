@@ -23,6 +23,7 @@ on:
       - 'package-lock.json'
       - '.github/scripts/resolve_extracted_name.py'
       - 'scripts/extract-documents.mjs'
+      - 'scripts/extract-documents.test.mjs'
       - '.github/workflows/extract-documents.yml'
   pull_request:
     branches:
@@ -46,6 +47,7 @@ on:
       - 'package-lock.json'
       - '.github/scripts/resolve_extracted_name.py'
       - 'scripts/extract-documents.mjs'
+      - 'scripts/extract-documents.test.mjs'
       - '.github/workflows/extract-documents.yml'
   workflow_dispatch:
 
@@ -113,6 +115,9 @@ jobs:
           expected="$(node -p "require('./package.json').dependencies.kordoc")"
           installed="$(node -p "require('./node_modules/kordoc/package.json').version")"
           test "$installed" = "$expected"
+
+      - name: Run extraction regression tests
+        run: npm test
 
       - name: Audit installed dependency set
         run: npm audit --omit=dev --audit-level=high

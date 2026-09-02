@@ -11,5 +11,8 @@
   "overrides": {
     "adm-zip": "^0.6.0",
     "sharp": "^0.35.0"
+  },
+  "scripts": {
+    "test": "node --test scripts/extract-documents.test.mjs"
   }
 }
