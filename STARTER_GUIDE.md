@@ -17,9 +17,10 @@ Template Repository를 사용하지 않는 경우에도 공유받은 starter 자
 
 ## 복제 방법
 
-1. 이 저장소가 GitHub Template Repository로 설정되어 있으면 `Use this template`로 자신의 **Private** 저장소를 만듭니다.
+1. `Use this template`로 자신의 **Private** 저장소를 만듭니다.
 2. 일반적으로 기본 브랜치만 복제하면 충분합니다. 검증용·임시 브랜치를 함께 가져올 필요는 없습니다.
 3. 새 저장소에서 아래 `권장 첫 점검`을 수행한 뒤 실제 사건 폴더를 추가합니다.
+4. 초기 설정이 끝났다면 `QUICK_START.md`의 사건 폴더·자동변환·OneOCR·Purge 사용법을 참고합니다.
 
 ## 포함된 자동화
 
@@ -49,6 +50,8 @@ Template Repository를 사용하지 않는 경우에도 공유받은 starter 자
 
 실제로 사용할 경우에만 해당 저장소에 한정된 fine-grained token을 만들고 Actions secret `PURGE_TOKEN`으로 등록합니다. 필요한 최소 권한은 현재 workflow 기준 `Contents: Read and write`, `Workflows: Read and write`입니다.
 
+구체적인 사건 경로 형식과 Purge 주의사항은 `QUICK_START.md`를 따릅니다.
+
 ## 처음 ChatGPT에 요청할 문구
 
 ```text
@@ -65,3 +68,4 @@ Template Repository를 사용하지 않는 경우에도 공유받은 starter 자
 3. OneOCR를 사용할 경우 OneOCR PR 설정 검증 및 첫 cache 생성 확인
 4. 필요 없는 업무 어댑터나 Actions 삭제
 5. 자신의 `m1` 저장소 경로를 참조하는 템플릿·호출문을 자신의 저장소명에 맞게 조정
+6. `QUICK_START.md`의 권장 사건 폴더 형식으로 테스트 사건을 하나 만들어 자동변환 흐름 확인
