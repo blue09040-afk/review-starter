@@ -2,6 +2,7 @@
   "name": "review-document-extraction",
   "version": "1.0.0",
   "private": true,
+  "description": "starter Actions validation",
   "engines": {
     "node": ">=20 <21"
   },
