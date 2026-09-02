@@ -1,0 +1,203 @@
+name: Extract Documents to Markdown
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - '**/*.hwp'
+      - '**/*.HWP'
+      - '**/*.hwpx'
+      - '**/*.HWPX'
+      - '**/*.odt'
+      - '**/*.ODT'
+      - '**/*.pdf'
+      - '**/*.PDF'
+      - '**/*.jpg'
+      - '**/*.JPG'
+      - '**/*.jpeg'
+      - '**/*.JPEG'
+      - '**/*.png'
+      - '**/*.PNG'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/scripts/resolve_extracted_name.py'
+      - 'scripts/extract-documents.mjs'
+      - '.github/workflows/extract-documents.yml'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - '**/*.hwp'
+      - '**/*.HWP'
+      - '**/*.hwpx'
+      - '**/*.HWPX'
+      - '**/*.odt'
+      - '**/*.ODT'
+      - '**/*.pdf'
+      - '**/*.PDF'
+      - '**/*.jpg'
+      - '**/*.JPG'
+      - '**/*.jpeg'
+      - '**/*.JPEG'
+      - '**/*.png'
+      - '**/*.PNG'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/scripts/resolve_extracted_name.py'
+      - 'scripts/extract-documents.mjs'
+      - '.github/workflows/extract-documents.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: extract-documents-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  extract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: ${{ github.event_name != 'pull_request' }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Check extraction script syntax
+        run: node --check scripts/extract-documents.mjs
+
+      - name: Check filename resolver syntax and behavior
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile .github/scripts/resolve_extracted_name.py
+
+          testdir=".filename-rule-test"
+          trap 'rm -rf "$testdir"' EXIT
+          rm -rf "$testdir"
+          mkdir -p "$testdir"
+
+          touch "$testdir/의견서.odt"
+          test "$(python3 .github/scripts/resolve_extracted_name.py "$testdir/의견서.odt")" = "$testdir/extracted/의견서.md"
+
+          touch "$testdir/신고서.pdf"
+          test "$(python3 .github/scripts/resolve_extracted_name.py "$testdir/신고서.pdf")" = "$testdir/extracted/신고서.md"
+
+          touch "$testdir/신고서.hwp" "$testdir/신고서.odt"
+          test "$(python3 .github/scripts/resolve_extracted_name.py "$testdir/신고서.pdf")" = "$testdir/extracted/신고서-pdf.md"
+          test "$(python3 .github/scripts/resolve_extracted_name.py "$testdir/신고서.hwp")" = "$testdir/extracted/신고서-hwp.md"
+          test "$(python3 .github/scripts/resolve_extracted_name.py "$testdir/신고서.odt")" = "$testdir/extracted/신고서-odt.md"
+
+          touch "$testdir/사진.jpg" "$testdir/사진.png"
+          test "$(python3 .github/scripts/resolve_extracted_name.py "$testdir/사진.jpg")" = "$testdir/extracted/사진-jpg.md"
+          test "$(python3 .github/scripts/resolve_extracted_name.py "$testdir/사진.png")" = "$testdir/extracted/사진-png.md"
+
+      - name: Install locked parser and OCR dependencies
+        run: npm ci
+
+      - name: Verify pinned kordoc version
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected="$(node -p "require('./package.json').dependencies.kordoc")"
+          installed="$(node -p "require('./node_modules/kordoc/package.json').version")"
+          test "$installed" = "$expected"
+
+      - name: Audit installed dependency set
+        run: npm audit --omit=dev --audit-level=high
+
+      - name: Detect ODT inputs
+        id: odt-inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          if find . -type f -iname '*.odt' \
+            -not -path './.git/*' -not -path './node_modules/*' -not -path '*/extracted/*' \
+            -print -quit | grep -q .; then
+            echo 'present=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'present=false' >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install LibreOffice Writer for ODT
+        if: steps.odt-inputs.outputs.present == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y libreoffice-writer
+          libreoffice --headless --version
+
+      - name: Detect OCR-capable inputs
+        id: ocr-inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          if find . -type f \( \
+            -iname '*.odt' -o \
+            -iname '*.pdf' -o \
+            -iname '*.jpg' -o \
+            -iname '*.jpeg' -o \
+            -iname '*.png' \
+          \) -not -path './.git/*' -not -path './node_modules/*' -not -path '*/extracted/*' -print -quit | grep -q .; then
+            echo 'present=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'present=false' >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Restore PP-OCRv5 model cache
+        if: steps.ocr-inputs.outputs.present == 'true'
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: ~/.cache/kordoc/models
+          key: ${{ runner.os }}-kordoc-ppocrv5-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-kordoc-ppocrv5-
+
+      - name: Prepare and verify PP-OCRv5 models
+        if: steps.ocr-inputs.outputs.present == 'true'
+        run: npx --no-install kordoc check-ocr-models
+
+      - name: Convert documents to Markdown
+        id: extract
+        continue-on-error: true
+        env:
+          KORDOC_OFFLINE: '1'
+          KORDOC_ROOT: ${{ github.workspace }}
+        run: node scripts/extract-documents.mjs
+
+      - name: Commit generated Markdown
+        if: always() && github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A -- ':(glob)**/extracted/*.md'
+
+          if git diff --cached --quiet; then
+            echo "No extracted Markdown changes to commit."
+            exit 0
+          fi
+
+          git commit -m "chore: auto-extract documents to Markdown"
+          git push
+
+      - name: Fail when a source document could not be parsed
+        if: steps.extract.outcome == 'failure'
+        shell: bash
+        run: |
+          echo "One or more source documents could not be parsed. Check the generated failure Markdown and workflow logs."
+          exit 1

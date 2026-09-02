@@ -1,0 +1,7 @@
+node_modules/
+npm-debug.log*
+
+# OneOCR runtime/cache must never be committed
+.cache/oneocr/
+temp_sketch_download.msixbundle
+temp_oneocr_extract/

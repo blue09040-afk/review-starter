@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "case_path": "cases/YYYYMMDD_간단한사건명",
+  "review_profile": "daily-audit",
+  "review_types": ["확인 필요"],
+  "reference_dates": {
+    "bid_notice_date": null,
+    "contract_date": null,
+    "cost_basis_date": null
+  },
+  "source_path": "source",
+  "extracted_path": "source/extracted",
+  "working_path": "working",
+  "result_path": "result/daily-audit",
+  "guidance_entrypoint": "<내-m1-저장소>:prompts/chat_mode/일상감사 검토/00_사용안내_및_진입점.md",
+  "case_review_schema": "<내-m1-저장소>:prompts/chat_mode/일상감사 검토/schemas/case_review_schema.json",
+  "required_outputs": [
+    "01_자료목록.md",
+    "02_사실확인표.md",
+    "03_상충및누락표.md",
+    "04_규칙적용표.md",
+    "05_수정필요사항_및_개선안.md",
+    "06_추가자료요청.md",
+    "07_일상감사의견서_초안.md",
+    "case_review.json"
+  ]
+}

@@ -1,0 +1,403 @@
+name: OneOCR Cross Check
+
+on:
+  workflow_dispatch:
+    inputs:
+      document_path:
+        description: "Repository-relative .hwpx or .pdf path"
+        required: true
+        type: string
+      source_markdown:
+        description: "Optional Markdown path for OCR comparison; HWPX auto-detects extracted/<name>.md"
+        required: false
+        default: ""
+        type: string
+      dpi:
+        description: "PDF rasterization DPI (72-600)"
+        required: false
+        default: "220"
+        type: string
+  workflow_call:
+    inputs:
+      document_path:
+        required: true
+        type: string
+      source_markdown:
+        required: false
+        default: ""
+        type: string
+      dpi:
+        required: false
+        default: "220"
+        type: string
+  pull_request:
+    paths:
+      - ".github/workflows/oneocr-cross-check.yml"
+      - ".github/oneocr/**"
+      - "package.json"
+      - "package-lock.json"
+
+permissions:
+  contents: read
+
+env:
+  PYTHONIOENCODING: utf-8
+  KORDOC_OFFLINE: "1"
+  ONEOCR_ACQUISITION_MODE: "fast-mirror"
+
+jobs:
+  validate-oneocr-workflow:
+    if: github.event_name == 'pull_request'
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.12"
+
+      - name: Validate hash-pinned Python wheels
+        shell: pwsh
+        run: |
+          python -m pip install --only-binary=:all: --require-hashes -r .github/oneocr/requirements-win-py312.txt
+
+      - name: Validate PowerShell downloader syntax
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path -LiteralPath ".github/oneocr/download_runtime.ps1"),
+            [ref]$tokens,
+            [ref]$errors
+          ) | Out-Null
+          if ($errors.Count -gt 0) {
+            $errors | ForEach-Object { Write-Error $_.Message }
+            throw "PowerShell downloader syntax validation failed"
+          }
+
+      - name: Validate runtime source configuration
+        shell: pwsh
+        run: |
+          $probe = Join-Path $env:RUNNER_TEMP "oneocr-config-check"
+          & ".github/oneocr/download_runtime.ps1" -OutDir $probe -ValidateConfigOnly
+          if ($LASTEXITCODE -ne 0) {
+            throw "OneOCR runtime source configuration validation failed"
+          }
+
+  oneocr-cross-check:
+    if: github.event_name != 'pull_request'
+    permissions:
+      contents: write
+    runs-on: windows-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Resolve and validate inputs
+        shell: pwsh
+        env:
+          REQUEST_DOCUMENT: ${{ inputs.document_path || '20260821_test/★의견서(2072. 화성산업진흥원 업무용 차량 임차).hwpx' }}
+          REQUEST_SOURCE_MD: ${{ inputs.source_markdown || '' }}
+          REQUEST_DPI: ${{ inputs.dpi || '220' }}
+        run: |
+          $workspace = (Resolve-Path -LiteralPath $env:GITHUB_WORKSPACE).Path
+          $prefix = $workspace.TrimEnd('\') + '\'
+
+          function Resolve-RepositoryFile([string]$relative, [string]$label) {
+            if ([string]::IsNullOrWhiteSpace($relative)) { return $null }
+            if ([System.IO.Path]::IsPathRooted($relative)) { throw "$label must be repository-relative" }
+            $candidate = Join-Path $workspace $relative
+            if (!(Test-Path -LiteralPath $candidate -PathType Leaf)) { throw "$label not found: $relative" }
+            $resolved = (Resolve-Path -LiteralPath $candidate).Path
+            if (-not $resolved.StartsWith($prefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+              throw "$label escapes the repository workspace"
+            }
+            return $resolved
+          }
+
+          $inputPath = Resolve-RepositoryFile $env:REQUEST_DOCUMENT "document_path"
+          $ext = [System.IO.Path]::GetExtension($inputPath).ToLowerInvariant()
+          if ($ext -notin @('.hwpx', '.pdf')) { throw "Only .hwpx and .pdf inputs are supported" }
+
+          $dpi = 0
+          if (-not [int]::TryParse($env:REQUEST_DPI, [ref]$dpi) -or $dpi -lt 72 -or $dpi -gt 600) {
+            throw "dpi must be an integer between 72 and 600"
+          }
+
+          $sourceMd = Resolve-RepositoryFile $env:REQUEST_SOURCE_MD "source_markdown"
+          if (-not $sourceMd -and $ext -eq '.hwpx') {
+            $parent = Split-Path -Parent $inputPath
+            $stem = [System.IO.Path]::GetFileNameWithoutExtension($inputPath)
+            $auto = Join-Path (Join-Path $parent 'extracted') ($stem + '.md')
+            if (Test-Path -LiteralPath $auto -PathType Leaf) {
+              $sourceMd = (Resolve-Path -LiteralPath $auto).Path
+            }
+          }
+
+          "INPUT_PATH=$inputPath" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "INPUT_EXT=$ext" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "OCR_DPI=$dpi" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          if ($sourceMd) {
+            "SOURCE_MD_PATH=$sourceMd" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          } else {
+            "SOURCE_MD_PATH=" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          }
+          Write-Host "Input validated. Extension=$ext, DPI=$dpi, runtimeMode=$env:ONEOCR_ACQUISITION_MODE, comparison=$([bool]$sourceMd)"
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.12"
+
+      - name: Install hash-pinned Python wheels
+        shell: pwsh
+        run: |
+          python -m pip install --only-binary=:all: --require-hashes -r .github/oneocr/requirements-win-py312.txt
+
+      - name: Restore OneOCR runtime cache
+        if: github.event_name != 'pull_request'
+        id: oneocr-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: .cache/oneocr
+          key: oneocr-runtime-${{ runner.os }}-x64-v5-fast-mirror-${{ hashFiles('.github/oneocr/RUNTIME_SOURCE.txt') }}
+
+      - name: Validate restored OneOCR runtime
+        if: github.event_name != 'pull_request' && steps.oneocr-cache.outputs.cache-hit == 'true'
+        shell: pwsh
+        run: |
+          $root = Join-Path $env:GITHUB_WORKSPACE ".cache\oneocr"
+          $bin = Join-Path $root "bin"
+          $manifestPath = Join-Path $root "manifest.json"
+          if (!(Test-Path -LiteralPath $manifestPath -PathType Leaf)) { throw "Cached runtime manifest is missing" }
+          $manifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding utf8 | ConvertFrom-Json
+          if ([int]$manifest.schema -ne 2) { throw "Cached runtime manifest schema is unsupported" }
+          if (-not $manifest.acquisition) { throw "Cached runtime provenance is missing" }
+          if ([string]$manifest.acquisition.mode -ne $env:ONEOCR_ACQUISITION_MODE) {
+            throw "Cached runtime acquisition mode does not match the requested mode"
+          }
+          if ($env:ONEOCR_ACQUISITION_MODE -ne 'fast-mirror') {
+            throw "Configured OneOCR acquisition mode is unsupported"
+          }
+          $allowedSources = @('third-party-pinned-mirror', 'microsoft-cdn-resolver')
+          if ([string]$manifest.acquisition.source -notin $allowedSources) {
+            throw "Cached runtime provenance is not allowed for the requested mode"
+          }
+          $required = @('oneocr.dll', 'oneocr.onemodel', 'onnxruntime.dll')
+          foreach ($name in $required) {
+            $entry = $manifest.files | Where-Object { $_.name -eq $name } | Select-Object -First 1
+            if (-not $entry) { throw "Manifest entry missing: $name" }
+            $path = Join-Path $bin $name
+            if (!(Test-Path -LiteralPath $path -PathType Leaf)) { throw "Cached runtime file missing: $name" }
+            $actual = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($actual -ne ([string]$entry.sha256).ToLowerInvariant()) { throw "Cached runtime hash mismatch: $name" }
+          }
+          Write-Host "OneOCR cache hit: mode, provenance, manifest, and SHA-256 checks passed"
+
+      - name: Download and prepare OneOCR runtime on cache miss
+        if: steps.oneocr-cache.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          $root = Join-Path $env:GITHUB_WORKSPACE ".cache\oneocr"
+          $bin = Join-Path $root "bin"
+          Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $root
+          New-Item -ItemType Directory -Force $bin | Out-Null
+          $env:ONEOCR_TARGET = $bin
+          $provenancePath = Join-Path $root "acquisition.json"
+
+          $success = $false
+          for ($attempt = 1; $attempt -le 3; $attempt++) {
+            Write-Host "OneOCR acquisition attempt $attempt/3"
+            & ".github/oneocr/download_runtime.ps1" -OutDir $bin -Mode $env:ONEOCR_ACQUISITION_MODE -ProvenancePath $provenancePath
+            if ($LASTEXITCODE -eq 0) {
+              $success = $true
+              break
+            }
+            Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $bin
+            New-Item -ItemType Directory -Force $bin | Out-Null
+            if ($attempt -lt 3) { Start-Sleep -Seconds (5 * $attempt) }
+          }
+          if (-not $success) { throw "OneOCR runtime acquisition failed after 3 attempts" }
+          if (!(Test-Path -LiteralPath $provenancePath -PathType Leaf)) {
+            throw "OneOCR acquisition provenance was not recorded"
+          }
+          $acquisition = Get-Content -LiteralPath $provenancePath -Raw -Encoding utf8 | ConvertFrom-Json
+          if ([string]$acquisition.mode -ne $env:ONEOCR_ACQUISITION_MODE) {
+            throw "OneOCR acquisition provenance mode mismatch"
+          }
+
+          $required = @('oneocr.dll', 'oneocr.onemodel', 'onnxruntime.dll')
+          $files = @()
+          foreach ($name in $required) {
+            $path = Join-Path $bin $name
+            if (!(Test-Path -LiteralPath $path -PathType Leaf)) { throw "Downloaded runtime file missing: $name" }
+            $item = Get-Item -LiteralPath $path
+            if ($item.Length -le 0) { throw "Downloaded runtime file is empty: $name" }
+            $files += [pscustomobject]@{
+              name = $name
+              bytes = $item.Length
+              sha256 = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
+            }
+          }
+          [pscustomobject]@{
+            schema = 2
+            acquisition = $acquisition
+            files = $files
+          } | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $root 'manifest.json') -Encoding utf8
+          Remove-Item -LiteralPath $provenancePath -Force
+          Write-Host "OneOCR runtime prepared with acquisition provenance; only the three required runtime files and manifest are eligible for caching"
+
+      - name: Set up Node.js 20 for HWPX input
+        if: env.INPUT_EXT == '.hwpx'
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: "package-lock.json"
+
+      - name: Install pinned Kordoc dependencies for HWPX input
+        if: env.INPUT_EXT == '.hwpx'
+        shell: pwsh
+        run: npm ci --ignore-scripts --omit=optional
+
+      - name: Prepare PDF for OCR
+        shell: pwsh
+        run: |
+          $work = Join-Path $env:RUNNER_TEMP "oneocr-cross-check"
+          Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $work
+          New-Item -ItemType Directory -Force $work | Out-Null
+          $pdf = Join-Path $work "prepared.pdf"
+
+          if ($env:INPUT_EXT -eq '.pdf') {
+            Copy-Item -LiteralPath $env:INPUT_PATH -Destination $pdf
+          } else {
+            $svg = Join-Path $work "render.svg"
+            npx kordoc render "$env:INPUT_PATH" -o "$svg"
+            if ($LASTEXITCODE -ne 0 -or !(Test-Path -LiteralPath $svg -PathType Leaf)) {
+              throw "Kordoc render failed"
+            }
+
+            $html = Join-Path $work "print.html"
+            $htmlLines = @(
+              '<!doctype html>',
+              '<html>',
+              '<head>',
+              '<meta charset="utf-8">',
+              '<style>',
+              '@page { size: A4; margin: 0; }',
+              'html, body { margin: 0; padding: 0; width: 210mm; }',
+              'img { display: block; width: 210mm; height: auto; }',
+              '</style>',
+              '</head>',
+              '<body><img src="render.svg" alt=""></body>',
+              '</html>'
+            )
+            $htmlLines | Set-Content -LiteralPath $html -Encoding utf8
+
+            $candidates = @(
+              "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe",
+              "$env:ProgramFiles\Microsoft\Edge\Application\msedge.exe",
+              "$env:ProgramFiles\Google\Chrome\Application\chrome.exe",
+              "${env:ProgramFiles(x86)}\Google\Chrome\Application\chrome.exe"
+            )
+            $browser = $candidates | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+            if (-not $browser) { throw "No Edge/Chrome executable found" }
+            $uri = ([System.Uri]$html).AbsoluteUri
+            $browserArgs = @(
+              "--headless",
+              "--disable-gpu",
+              "--no-pdf-header-footer",
+              "--print-to-pdf=$pdf",
+              $uri
+            )
+            $process = Start-Process -FilePath $browser -ArgumentList $browserArgs -Wait -PassThru -NoNewWindow
+            if ($process.ExitCode -ne 0) { throw "Browser PDF conversion failed with exit code $($process.ExitCode)" }
+          }
+
+          if (!(Test-Path -LiteralPath $pdf -PathType Leaf)) { throw "Prepared PDF was not created" }
+          if ((Get-Item -LiteralPath $pdf).Length -le 0) { throw "Prepared PDF is empty" }
+          "OCR_PDF=$pdf" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: OCR PDF and compare when source Markdown exists
+        shell: pwsh
+        run: |
+          $result = Join-Path (Join-Path $env:RUNNER_TEMP "oneocr-cross-check") "result"
+          $runtime = Join-Path $env:GITHUB_WORKSPACE ".cache\oneocr\bin"
+          $arguments = @(
+            ".github/oneocr/ocr_pdf.py",
+            $env:OCR_PDF,
+            $runtime,
+            $result,
+            "--dpi",
+            $env:OCR_DPI
+          )
+          if (-not [string]::IsNullOrWhiteSpace($env:SOURCE_MD_PATH)) {
+            $arguments += @("--source-md", $env:SOURCE_MD_PATH)
+          }
+          python @arguments
+          if ($LASTEXITCODE -ne 0) { throw "OneOCR processing failed" }
+
+      - name: Verify outputs
+        shell: pwsh
+        run: |
+          $result = Join-Path (Join-Path $env:RUNNER_TEMP "oneocr-cross-check") "result"
+          $ocr = Join-Path $result "ocr.md"
+          $report = Join-Path $result "report.json"
+          if (!(Test-Path -LiteralPath $ocr -PathType Leaf)) { throw "ocr.md is missing" }
+          if (!(Test-Path -LiteralPath $report -PathType Leaf)) { throw "report.json is missing" }
+          if ((Get-Item -LiteralPath $ocr).Length -le 0) { throw "ocr.md is empty" }
+          Write-Host "OneOCR output verification passed"
+
+      - name: Save newly verified OneOCR runtime cache
+        if: steps.oneocr-cache.outputs.cache-hit != 'true' && github.event_name != 'pull_request'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: .cache/oneocr
+          key: oneocr-runtime-${{ runner.os }}-x64-v5-fast-mirror-${{ hashFiles('.github/oneocr/RUNTIME_SOURCE.txt') }}
+
+      - name: Publish OneOCR Markdown sidecar
+        if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+        shell: pwsh
+        run: |
+          $workspace = (Resolve-Path -LiteralPath $env:GITHUB_WORKSPACE).Path
+          $result = Join-Path (Join-Path $env:RUNNER_TEMP "oneocr-cross-check") "result"
+          $ocr = Join-Path $result "ocr.md"
+          if (!(Test-Path -LiteralPath $ocr -PathType Leaf)) { throw "ocr.md is missing" }
+
+          $parent = Split-Path -Parent $env:INPUT_PATH
+          $stem = [System.IO.Path]::GetFileNameWithoutExtension($env:INPUT_PATH)
+          $outputDir = Join-Path $parent "extracted"
+          $outputPath = Join-Path $outputDir ($stem + ".oneocr.md")
+          New-Item -ItemType Directory -Force -Path $outputDir | Out-Null
+          Copy-Item -LiteralPath $ocr -Destination $outputPath -Force
+
+          $relative = [System.IO.Path]::GetRelativePath($workspace, $outputPath).Replace('\', '/')
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -- "$relative"
+          $changed = @(git diff --cached --name-only)
+          if ($changed.Count -eq 0) {
+            Write-Host "OneOCR Markdown is unchanged: $relative"
+          } else {
+            git commit -m "chore: update OneOCR Markdown sidecar"
+            if ($LASTEXITCODE -ne 0) { throw "OneOCR Markdown commit failed" }
+            git push
+            if ($LASTEXITCODE -ne 0) { throw "OneOCR Markdown push failed" }
+            Write-Host "Published OneOCR Markdown: $relative"
+          }
+
+      - name: Cleanup transient files
+        if: always()
+        shell: pwsh
+        run: |
+          Remove-Item -Recurse -Force -ErrorAction SilentlyContinue (Join-Path $env:RUNNER_TEMP "oneocr-cross-check")
+          Remove-Item -Recurse -Force -ErrorAction SilentlyContinue (Join-Path $env:GITHUB_WORKSPACE ".cache\oneocr")
+          Remove-Item -Recurse -Force -ErrorAction SilentlyContinue (Join-Path $HOME ".config\oneocr")
+          Remove-Item -Force -ErrorAction SilentlyContinue "temp_sketch_download.msixbundle"
+          Remove-Item -Recurse -Force -ErrorAction SilentlyContinue "temp_oneocr_extract"

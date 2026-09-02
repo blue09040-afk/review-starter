@@ -1,0 +1,260 @@
+name: Purge Case History
+
+run-name: "Purge case history: ${{ inputs.case_path }}"
+
+on:
+  workflow_dispatch:
+    inputs:
+      case_path:
+        description: "삭제할 사건 폴더 경로 (예: cases/20260821_사건명 또는 20260821_사건명)"
+        required: true
+        type: string
+      confirm:
+        description: "영구 삭제 확인을 위해 PURGE 입력"
+        required: true
+        type: string
+
+# history rewrite는 .github/workflows가 포함된 과거 커밋의 SHA도 바꿀 수 있으므로
+# fetch/force-push에는 저장소 Secret PURGE_TOKEN을 사용한다.
+permissions:
+  contents: read
+
+concurrency:
+  group: purge-case-history
+  cancel-in-progress: false
+
+jobs:
+  purge:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      CASE_PATH_INPUT: ${{ inputs.case_path }}
+      CONFIRM_INPUT: ${{ inputs.confirm }}
+      PURGE_TOKEN: ${{ secrets.PURGE_TOKEN }}
+
+    steps:
+      - name: Checkout full repository history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+
+      - name: Validate purge request
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          path="${CASE_PATH_INPUT%/}"
+          trimmed="$(printf '%s' "$path" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+
+          [[ "$CONFIRM_INPUT" == "PURGE" ]] || { echo "::error::confirm 입력값이 PURGE가 아닙니다."; exit 1; }
+          [[ -n "$path" && "$path" == "$trimmed" ]] || { echo "::error::case_path가 비어 있거나 앞뒤에 공백이 있습니다."; exit 1; }
+          [[ "$path" != /* && "$path" != *$'\n'* && ! "$path" =~ (^|/)\.\.(/|$) ]] || { echo "::error::절대경로, 줄바꿈 또는 .. 경로는 허용하지 않습니다."; exit 1; }
+          [[ "$path" =~ ^([0-9]{8}_[^/]+|cases/[0-9]{8}_[^/]+)$ ]] || { echo "::error::허용 경로는 YYYYMMDD_사건명 또는 cases/YYYYMMDD_사건명 형식입니다."; exit 1; }
+          [[ -n "${PURGE_TOKEN:-}" ]] || { echo "::error::저장소 Secret PURGE_TOKEN이 없습니다."; exit 1; }
+
+          echo "PURGE_PATH=$path" >> "$GITHUB_ENV"
+          echo "검증된 요청 경로: $path"
+
+      - name: Configure authenticated remote
+        shell: bash
+        run: |
+          set -euo pipefail
+          auth_url="https://x-access-token:${PURGE_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git remote set-url origin "$auth_url"
+          git ls-remote origin HEAD >/dev/null
+          echo "PURGE_TOKEN 저장소 접근 확인 완료"
+
+      - name: Prepare branches and tags
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          git fetch --prune origin \
+            '+refs/heads/*:refs/remotes/origin/*' \
+            '+refs/tags/*:refs/tags/*'
+
+          git for-each-ref --format='%(refname:strip=3) %(objectname)' refs/remotes/origin/ \
+            | grep -v '^HEAD ' > "$RUNNER_TEMP/original-heads.txt" || true
+          git for-each-ref --format='%(refname:strip=2) %(objectname)' refs/tags/ \
+            > "$RUNNER_TEMP/original-tags.txt"
+
+          [[ -s "$RUNNER_TEMP/original-heads.txt" ]] || { echo "::error::원격 브랜치를 찾지 못했습니다."; exit 1; }
+
+          git checkout --detach >/dev/null 2>&1
+          while read -r branch sha; do
+            [[ -z "${branch:-}" ]] && continue
+            git update-ref "refs/heads/$branch" "$sha"
+          done < "$RUNNER_TEMP/original-heads.txt"
+
+      - name: Locate case path in reachable Git history
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          python3 - <<'PY'
+          import os
+          import subprocess
+          import unicodedata
+
+          requested = os.environ["PURGE_PATH"].rstrip("/")
+          wanted = unicodedata.normalize("NFC", requested)
+          wanted_parts = wanted.split("/")
+
+          raw = subprocess.check_output(
+              ["git", "-c", "core.quotePath=false", "rev-list", "--objects", "--all"],
+              text=True,
+              errors="surrogateescape",
+          )
+
+          matches = []
+          for line in raw.splitlines():
+              if " " not in line:
+                  continue
+              _, path = line.split(" ", 1)
+              normalized = unicodedata.normalize("NFC", path)
+              if normalized == wanted or normalized.startswith(wanted + "/"):
+                  matches.append(path)
+
+          if not matches:
+              print(f"::error::브랜치·태그에서 도달 가능한 Git 기록에서 지정 경로를 찾지 못했습니다: {requested}")
+              raise SystemExit(1)
+
+          roots = {
+              "/".join(path.split("/")[:len(wanted_parts)])
+              for path in matches
+          }
+          if {unicodedata.normalize("NFC", root) for root in roots} != {wanted}:
+              print("::error::동일 사건 경로를 안전하게 하나로 특정하지 못했습니다.")
+              raise SystemExit(1)
+
+          stored = sorted(roots)[0]
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as f:
+              f.write(f"PURGE_PATH_STORED={stored}\n")
+              f.write(f"PURGE_OBJECT_COUNT={len(matches)}\n")
+          with open(os.path.join(os.environ["RUNNER_TEMP"], "purge-path-stored.txt"), "w", encoding="utf-8") as f:
+              f.write(stored + "\n")
+
+          print(f"Git 과거 기록에서 삭제 대상 확인: {stored}")
+          print(f"경로 아래 도달 가능한 객체 수: {len(matches)}")
+          PY
+
+          IFS= read -r PURGE_PATH_STORED < "$RUNNER_TEMP/purge-path-stored.txt"
+          [[ -n "$PURGE_PATH_STORED" ]] || { echo "::error::Git 실제 경로를 현재 step으로 전달하지 못했습니다."; exit 1; }
+          export PURGE_PATH_STORED
+
+          if git cat-file -e "HEAD:$PURGE_PATH_STORED" 2>/dev/null; then
+            echo "PURGE_HEAD_STATE=현재 폴더 존재" >> "$GITHUB_ENV"
+            echo "현재 HEAD에도 사건 폴더가 존재합니다. 현재본과 과거 기록을 함께 제거합니다."
+          else
+            echo "PURGE_HEAD_STATE=현재 폴더 이미 삭제됨 - 과거 기록만 purge" >> "$GITHUB_ENV"
+            echo "현재 HEAD에서는 사건 폴더가 이미 삭제되어 있습니다. 과거 Git 기록만 제거합니다."
+          fi
+
+          commit_count="$(git log --all --format='%H' -- "$PURGE_PATH_STORED/" | sort -u | wc -l | tr -d ' ')"
+          echo "PURGE_COMMIT_COUNT=$commit_count" >> "$GITHUB_ENV"
+          echo "삭제 대상 경로가 포함된 커밋 수: $commit_count"
+
+      - name: Install git-filter-repo
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m venv "$RUNNER_TEMP/git-filter-repo-venv"
+          "$RUNNER_TEMP/git-filter-repo-venv/bin/pip" \
+            install --disable-pip-version-check --no-input git-filter-repo==2.47.0 >/dev/null
+          echo "$RUNNER_TEMP/git-filter-repo-venv/bin" >> "$GITHUB_PATH"
+
+      - name: Drop remote-tracking refs before rewrite
+        shell: bash
+        run: |
+          set -euo pipefail
+          while read -r ref; do
+            [[ -z "${ref:-}" ]] && continue
+            git update-ref -d "$ref"
+          done < <(git for-each-ref --format='%(refname)' refs/remotes/origin/)
+
+      - name: Rewrite history and remove case path
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          git filter-repo \
+            --sensitive-data-removal \
+            --invert-paths \
+            --path "$PURGE_PATH_STORED/" \
+            --force
+
+          python3 - <<'PY'
+          import os
+          import subprocess
+          import unicodedata
+
+          wanted = unicodedata.normalize("NFC", os.environ["PURGE_PATH"].rstrip("/"))
+          raw = subprocess.check_output(
+              ["git", "-c", "core.quotePath=false", "rev-list", "--objects", "--all"],
+              text=True,
+              errors="surrogateescape",
+          )
+
+          for line in raw.splitlines():
+              if " " not in line:
+                  continue
+              _, path = line.split(" ", 1)
+              normalized = unicodedata.normalize("NFC", path)
+              if normalized == wanted or normalized.startswith(wanted + "/"):
+                  print(f"::error::기록 재작성 후에도 지정 사건 경로가 남아 있습니다: {path}")
+                  raise SystemExit(1)
+
+          print("기록 재작성 후 지정 사건 경로 제거 확인 완료")
+          PY
+
+      - name: Restore authenticated remote
+        shell: bash
+        run: |
+          set -euo pipefail
+          git remote remove origin 2>/dev/null || true
+          git remote add origin "https://x-access-token:${PURGE_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+
+      - name: Force-push rewritten refs atomically
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          args=(push --atomic origin)
+
+          while read -r branch oldsha; do
+            [[ -z "${branch:-}" ]] && continue
+            args+=("--force-with-lease=refs/heads/$branch:$oldsha")
+            if git show-ref --verify --quiet "refs/heads/$branch"; then
+              args+=("refs/heads/$branch:refs/heads/$branch")
+            else
+              args+=(":refs/heads/$branch")
+            fi
+          done < "$RUNNER_TEMP/original-heads.txt"
+
+          while read -r tag oldsha; do
+            [[ -z "${tag:-}" ]] && continue
+            args+=("--force-with-lease=refs/tags/$tag:$oldsha")
+            if git show-ref --verify --quiet "refs/tags/$tag"; then
+              args+=("refs/tags/$tag:refs/tags/$tag")
+            else
+              args+=(":refs/tags/$tag")
+            fi
+          done < "$RUNNER_TEMP/original-tags.txt"
+
+          git "${args[@]}"
+
+      - name: Write completion summary
+        if: success()
+        shell: bash
+        run: |
+          {
+            echo "## Purge Case History 완료"
+            echo "- 요청 경로: \`$PURGE_PATH\`"
+            echo "- Git 실제 경로: \`$PURGE_PATH_STORED\`"
+            echo "- 실행 전 상태: $PURGE_HEAD_STATE"
+            echo "- 재작성 대상 커밋 수: $PURGE_COMMIT_COUNT"
+            echo "- 확인 객체 수: $PURGE_OBJECT_COUNT"
+            echo "- Actions artifact 생성: 없음"
+          } >> "$GITHUB_STEP_SUMMARY"

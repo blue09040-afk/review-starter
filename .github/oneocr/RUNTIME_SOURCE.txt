@@ -1,0 +1,30 @@
+cache-generation: 5
+platform: windows-x64
+default-acquisition-mode: fast-mirror
+supported-acquisition-modes: fast-mirror
+acquisition-script: .github/oneocr/download_runtime.ps1
+acquisition-order: GitHub Actions cache -> pinned third-party mirror -> verified Microsoft CDN bundle discovered through the rg-adguard resolver -> fail closed
+winget-poc-status: inactive after failed GitHub windows-latest proof of concept
+winget-poc-run: https://github.com/blue09040-afk/review/actions/runs/32688100092
+winget-poc-result: installed WinGet could not retrieve Microsoft Store package information because Microsoft Entra ID authentication was required; do not retry in normal runs
+winget-poc-return-code: -1978335114
+mirror-runtime-version: SnippingToolApp_11.2602.49.0_x64
+mirror-repository: shtrasser-dev/Zaya.External
+mirror-commit: e4684345d0183f751f0febc1840318dd7b16a5e3
+mirror-path: OneOCR/OneOCR.zip
+mirror-archive-sha256: 8e496a0920e30496183322547f6e986b74ba101256f61869a9d5959545019c25
+mirror-oneocr-dll-sha256: dbd46b5fdc72044a11f8c85d11a1366745ea6e0f7c99f8fb5285f025c0c1275d
+mirror-oneocr-onemodel-sha256: 406a7c83a7fe5ba046ad1ffe5100bcd24ee1b85a7b0d88d10cc76ff39a1c4119
+mirror-onnxruntime-dll-sha256: 9d3a222a2ccf8e793efdfa2bbbccddd93992a8caea1c95f36015ac6ed574eb33
+mirror-signature-policy: oneocr.dll and onnxruntime.dll must have valid Microsoft Authenticode signatures; oneocr.onemodel is pinned by SHA-256
+mirror-baseline: Microsoft.ScreenSketch_2022.2602.49.0 / SnippingToolApp_11.2602.49.0_x64
+mirror-trust-boundary: third-party redistribution; accept only the commit-pinned archive and exact per-file SHA-256 values above
+official-fallback-product-id: 9MZ95KL8MR0L
+official-fallback-resolver: https://store.rg-adguard.net/api/GetFiles
+official-fallback-resolver-headers: browser User-Agent plus Origin and Referer matching the pinned acquisition helper behavior
+official-fallback-download-host-policy: HTTPS Microsoft or Windows Update host only
+official-fallback-verification: Microsoft Authenticode signature, Microsoft.ScreenSketch identity, and Microsoft signatures on executable DLLs
+cached-files: oneocr.dll, oneocr.onemodel, onnxruntime.dll
+cache-policy: cache key is pinned to fast-mirror policy and every manifest records the actual source
+python-requirements: .github/oneocr/requirements-win-py312.txt
+note: When refreshing the mirror baseline, bump cache-generation and update mirror-runtime-version, archive SHA-256, and all three file SHA-256 values together.
