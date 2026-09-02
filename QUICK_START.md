@@ -98,7 +98,38 @@ Action이 실패하면 해당 실행 로그와 생성된 실패 Markdown이 있�
 
 ---
 
-## 4. OneOCR 교차검증
+## 4. 일상감사 사건은 어댑터 구조 사용
+
+일상감사는 일반 사건 폴더보다 자료 종류와 결과물이 많으므로 `DAILY_AUDIT_ADAPTER.md`의 구조를 권장합니다.
+
+```text
+cases/YYYYMMDD_간단한사건명/
+├─ source/
+│  └─ extracted/
+├─ working/
+└─ result/
+   └─ daily-audit/
+```
+
+- 원자료: `source/`
+- 자동 추출본: `source/extracted/`
+- 수동 보정·쟁점정리: `working/`
+- 최종 검토결과: `result/daily-audit/`
+
+호출 예시:
+
+```text
+@GitHub review의 DAILY_AUDIT_ADAPTER.md와
+@GitHub m1의 일상감사 검토 진입점을 읽어줘.
+review의 cases/20260902_일상감사_사업명/source 자료를 검토하고,
+결과를 cases/20260902_일상감사_사업명/result/daily-audit/에 작성해줘.
+```
+
+일상감사 기본 산출물은 7종 Markdown과 `case_review.json`이며, 자세한 파일명·검토 순서는 `DAILY_AUDIT_ADAPTER.md`를 따릅니다.
+
+---
+
+## 5. OneOCR 교차검증
 
 중요한 HWPX 또는 PDF를 자동추출 결과와 한 번 더 비교하고 싶을 때만 `OneOCR Cross Check`를 사용합니다.
 
@@ -122,7 +153,7 @@ OneOCR는 모든 문서에 자동으로 돌리는 기본 단계가 아니라 **�
 
 ---
 
-## 5. 사건 폴더 삭제와 Purge 구분
+## 6. 사건 폴더 삭제와 Purge 구분
 
 ### 일반 삭제
 
@@ -169,7 +200,7 @@ PURGE
 
 ---
 
-## 6. 가장 간단한 일상 사용 순서
+## 7. 가장 간단한 일상 사용 순서
 
 ```text
 1. cases/YYYYMMDD_사건명 폴더 생성
