@@ -5,7 +5,7 @@ supported-acquisition-modes: fast-mirror
 acquisition-script: .github/oneocr/download_runtime.ps1
 acquisition-order: GitHub Actions cache -> pinned third-party mirror -> verified Microsoft CDN bundle discovered through the rg-adguard resolver -> fail closed
 winget-poc-status: inactive after failed GitHub windows-latest proof of concept
-winget-poc-run: https://github.com/blue09040-afk/review/actions/runs/32688100092
+winget-poc-run: historical source-repository validation run not included in this starter
 winget-poc-result: installed WinGet could not retrieve Microsoft Store package information because Microsoft Entra ID authentication was required; do not retry in normal runs
 winget-poc-return-code: -1978335114
 mirror-runtime-version: SnippingToolApp_11.2602.49.0_x64
