@@ -42,7 +42,7 @@ HWP, HWPX, ODT, PDF, JPG/JPEG/PNG 원자료는 `source/`에 두는 것을 권장
 
 추출 스크립트·테스트·의존성·workflow가 바뀌면 Actions에서 `npm test`를 실행하여 ODT 한글 붕괴 방지 회귀 테스트를 포함한 추출 회귀 테스트를 먼저 확인합니다.
 
-중요 문서이거나 Kordoc 직접 추출의 누락·배치 이상이 의심되면 `.github/workflows/oneocr-cross-check.yml`을 선택적으로 실행하여 OneOCR로 교차검증할 수 있습니다. 현재 starter workflow 입력은 HWPX·PDF이며, HWP 5.x 시각 교차검증은 후속 이식 항목입니다. 결과는 `extracted/<추출명>.oneocr.md` sidecar로 남기고 기본 자동 추출을 대체하지 않습니다.
+중요 문서이거나 Kordoc 직접 추출의 누락·배치 이상이 의심되면 `.github/workflows/oneocr-cross-check.yml`을 선택적으로 실행하여 OneOCR로 교차검증할 수 있습니다. 현재 starter workflow 입력은 HWPX·PDF이며, HWP 5.x 시각 교차검증은 후속 이식 항목입니다. 현재 workflow는 HWPX의 `source_markdown` 자동탐색과 OneOCR sidecar 이름에 단순 원본 stem을 사용하므로, 같은 stem의 다른 형식이 함께 있어 자동추출본에 확장자 suffix가 붙는 경우 `source_markdown`을 직접 지정해야 하며 sidecar 경로 충돌에도 주의합니다. 충돌 회피용 정본 파일명 연동은 후속 workflow 이식 대상이고, OneOCR 결과는 기본 자동 추출을 대체하지 않습니다.
 
 ## 3. AI 검토 시작점
 
