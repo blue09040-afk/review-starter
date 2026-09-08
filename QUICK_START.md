@@ -131,12 +131,12 @@ review의 cases/20260902_일상감사_사업명/source 자료를 검토하고,
 
 ## 5. OneOCR 교차검증
 
-중요한 HWPX 또는 PDF를 자동추출 결과와 한 번 더 비교하고 싶을 때만 `OneOCR Cross Check`를 사용합니다.
+중요한 HWP(5.x)·HWPX 또는 PDF를 자동추출 결과와 한 번 더 비교하고 싶을 때만 `OneOCR Cross Check`를 사용합니다.
 
 GitHub의 **Actions → OneOCR Cross Check → Run workflow**에서 다음을 입력합니다.
 
-- `document_path`: 저장소 기준 HWPX 또는 PDF 경로
-- `source_markdown`: 비교할 Markdown 경로. 비워 두면 HWPX는 같은 폴더의 `extracted/<이름>.md`를 자동 탐색할 수 있음
+- `document_path`: 저장소 기준 HWP(5.x)·HWPX 또는 PDF 경로
+- `source_markdown`: 비교할 Markdown 경로. 비워 두면 HWP/HWPX는 파일명 충돌 규칙을 반영한 정본 `extracted/*.md` 경로를 자동 탐색할 수 있음
 - `dpi`: 기본값 `220`, 특별한 이유가 없으면 그대로 사용
 
 예:
@@ -148,6 +148,13 @@ cases/20260902_사건명/담당부서자료.hwpx
 source_markdown:
 cases/20260902_사건명/extracted/담당부서자료.md
 ```
+
+OneOCR 참고:
+
+- HWP는 **HWP 5.x**만 시각 교차검증을 지원합니다. HWP3는 기본 Markdown 자동추출은 되지만 OneOCR 입력에서는 거부됩니다.
+- HWP는 Kordoc HTML 렌더 → headless Edge/Chrome PDF 인쇄 → OneOCR 경로를 사용하고, HWPX는 기존 SVG 렌더 경로를 유지합니다.
+- 결과는 `extracted/<추출명>.oneocr.md` sidecar로 남으며, 같은 stem의 형식이 여러 개면 `신고서-hwp.oneocr.md`처럼 확장자 suffix를 유지합니다.
+- Kordoc의 HWP5/HWPX 시각 렌더는 머리말·꼬리말·수식을 완전 렌더하지 않을 수 있으므로, 해당 요소가 중요하면 OneOCR만으로 원문 충실성을 확정하지 마세요.
 
 OneOCR는 모든 문서에 자동으로 돌리는 기본 단계가 아니라 **중요 문서의 선택적 교차검증 수단**으로 사용합니다. 첫 실행에서는 runtime cache가 새로 만들어질 수 있습니다.
 
