@@ -29,7 +29,7 @@ Template Repository를 사용하지 않는 경우에도 공유받은 starter 자
 - `Purge Case History`: 특정 사건 경로를 Git 과거 이력까지 제거하는 수동 history rewrite 도구
 - Dependabot: npm 의존성 월간 확인
 
-현재 문서추출 기준 Kordoc 버전은 `4.12.0`입니다.
+현재 문서추출 기준 Kordoc 버전은 `4.13.1`입니다. OneOCR 교차검증 Action은 현재 HWPX·PDF 입력을 지원하며, HWP 5.x 지원은 후속 workflow 이식 후 활성화됩니다.
 
 ## 새 저장소에서 다시 만들어지는 것
 
