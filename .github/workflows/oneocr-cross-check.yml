@@ -4,11 +4,11 @@ on:
   workflow_dispatch:
     inputs:
       document_path:
-        description: "Repository-relative .hwpx or .pdf path"
+        description: "Repository-relative .hwp (HWP 5.x), .hwpx or .pdf path"
         required: true
         type: string
       source_markdown:
-        description: "Optional Markdown path for OCR comparison; HWPX auto-detects extracted/<name>.md"
+        description: "Optional Markdown path for OCR comparison; HWP/HWPX auto-detects the canonical extracted Markdown"
         required: false
         default: ""
         type: string
@@ -34,6 +34,7 @@ on:
     paths:
       - ".github/workflows/oneocr-cross-check.yml"
       - ".github/oneocr/**"
+      - ".github/scripts/resolve_extracted_name.py"
       - "package.json"
       - "package-lock.json"
 
@@ -88,6 +89,25 @@ jobs:
             throw "OneOCR runtime source configuration validation failed"
           }
 
+      - name: Set up Node.js 20 for Kordoc smoke check
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: "package-lock.json"
+
+      - name: Verify pinned Kordoc render CLI on Windows
+        shell: pwsh
+        run: |
+          npm ci --ignore-scripts --omit=optional
+          $expected = (Get-Content -LiteralPath "package.json" -Raw -Encoding utf8 | ConvertFrom-Json).dependencies.kordoc
+          $installed = node -p "require('./node_modules/kordoc/package.json').version"
+          if ($installed -ne $expected) { throw "Installed Kordoc version does not match package.json" }
+          $help = (npx --no-install kordoc render --help 2>&1 | Out-String)
+          if ($LASTEXITCODE -ne 0 -or $help -notmatch 'HWP\(5\.x\)' -or $help -notmatch 'html') {
+            throw "Pinned Kordoc render CLI does not advertise HWP 5.x and HTML rendering support"
+          }
+
   oneocr-cross-check:
     if: github.event_name != 'pull_request'
     permissions:
@@ -98,6 +118,11 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.12"
 
       - name: Resolve and validate inputs
         shell: pwsh
@@ -123,7 +148,29 @@ jobs:
 
           $inputPath = Resolve-RepositoryFile $env:REQUEST_DOCUMENT "document_path"
           $ext = [System.IO.Path]::GetExtension($inputPath).ToLowerInvariant()
-          if ($ext -notin @('.hwpx', '.pdf')) { throw "Only .hwpx and .pdf inputs are supported" }
+          if ($ext -notin @('.hwp', '.hwpx', '.pdf')) { throw "Only .hwp (HWP 5.x), .hwpx and .pdf inputs are supported" }
+          if ($ext -eq '.hwp') {
+            $expectedCfb = [byte[]](0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1)
+            $stream = [System.IO.File]::OpenRead($inputPath)
+            try {
+              $actualCfb = New-Object byte[] 8
+              $read = $stream.Read($actualCfb, 0, 8)
+            } finally {
+              $stream.Dispose()
+            }
+            $signatureMatches = ($read -eq 8)
+            if ($signatureMatches) {
+              for ($i = 0; $i -lt 8; $i++) {
+                if ($actualCfb[$i] -ne $expectedCfb[$i]) {
+                  $signatureMatches = $false
+                  break
+                }
+              }
+            }
+            if (-not $signatureMatches) {
+              throw "HWP OneOCR cross-check requires an HWP 5.x compound-file document; HWP3 is not supported by the visual renderer"
+            }
+          }
 
           $dpi = 0
           if (-not [int]::TryParse($env:REQUEST_DPI, [ref]$dpi) -or $dpi -lt 72 -or $dpi -gt 600) {
@@ -131,10 +178,14 @@ jobs:
           }
 
           $sourceMd = Resolve-RepositoryFile $env:REQUEST_SOURCE_MD "source_markdown"
-          if (-not $sourceMd -and $ext -eq '.hwpx') {
-            $parent = Split-Path -Parent $inputPath
-            $stem = [System.IO.Path]::GetFileNameWithoutExtension($inputPath)
-            $auto = Join-Path (Join-Path $parent 'extracted') ($stem + '.md')
+          $resolver = Join-Path $workspace ".github\scripts\resolve_extracted_name.py"
+          $resolvedMdRelative = (& python $resolver $inputPath | Select-Object -Last 1)
+          if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($resolvedMdRelative)) {
+            throw "Failed to resolve the canonical extracted Markdown path"
+          }
+          $resolvedMdRelative = $resolvedMdRelative.Trim()
+          if (-not $sourceMd -and $ext -in @('.hwp', '.hwpx')) {
+            $auto = Join-Path $workspace $resolvedMdRelative
             if (Test-Path -LiteralPath $auto -PathType Leaf) {
               $sourceMd = (Resolve-Path -LiteralPath $auto).Path
             }
@@ -143,17 +194,13 @@ jobs:
           "INPUT_PATH=$inputPath" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           "INPUT_EXT=$ext" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           "OCR_DPI=$dpi" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "EXTRACTED_MD_RELATIVE=$resolvedMdRelative" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           if ($sourceMd) {
             "SOURCE_MD_PATH=$sourceMd" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           } else {
             "SOURCE_MD_PATH=" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           }
           Write-Host "Input validated. Extension=$ext, DPI=$dpi, runtimeMode=$env:ONEOCR_ACQUISITION_MODE, comparison=$([bool]$sourceMd)"
-
-      - name: Set up Python 3.12
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
-        with:
-          python-version: "3.12"
 
       - name: Install hash-pinned Python wheels
         shell: pwsh
@@ -253,16 +300,16 @@ jobs:
           Remove-Item -LiteralPath $provenancePath -Force
           Write-Host "OneOCR runtime prepared with acquisition provenance; only the three required runtime files and manifest are eligible for caching"
 
-      - name: Set up Node.js 20 for HWPX input
-        if: env.INPUT_EXT == '.hwpx'
+      - name: Set up Node.js 20 for HWP/HWPX input
+        if: env.INPUT_EXT == '.hwp' || env.INPUT_EXT == '.hwpx'
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: "20"
           cache: "npm"
           cache-dependency-path: "package-lock.json"
 
-      - name: Install pinned Kordoc dependencies for HWPX input
-        if: env.INPUT_EXT == '.hwpx'
+      - name: Install pinned Kordoc dependencies for HWP/HWPX input
+        if: env.INPUT_EXT == '.hwp' || env.INPUT_EXT == '.hwpx'
         shell: pwsh
         run: npm ci --ignore-scripts --omit=optional
 
@@ -277,28 +324,34 @@ jobs:
           if ($env:INPUT_EXT -eq '.pdf') {
             Copy-Item -LiteralPath $env:INPUT_PATH -Destination $pdf
           } else {
-            $svg = Join-Path $work "render.svg"
-            npx kordoc render "$env:INPUT_PATH" -o "$svg"
-            if ($LASTEXITCODE -ne 0 -or !(Test-Path -LiteralPath $svg -PathType Leaf)) {
-              throw "Kordoc render failed"
-            }
-
             $html = Join-Path $work "print.html"
-            $htmlLines = @(
-              '<!doctype html>',
-              '<html>',
-              '<head>',
-              '<meta charset="utf-8">',
-              '<style>',
-              '@page { size: A4; margin: 0; }',
-              'html, body { margin: 0; padding: 0; width: 210mm; }',
-              'img { display: block; width: 210mm; height: auto; }',
-              '</style>',
-              '</head>',
-              '<body><img src="render.svg" alt=""></body>',
-              '</html>'
-            )
-            $htmlLines | Set-Content -LiteralPath $html -Encoding utf8
+            if ($env:INPUT_EXT -eq '.hwp') {
+              npx --no-install kordoc render "$env:INPUT_PATH" --format html -o "$html" --silent
+              if ($LASTEXITCODE -ne 0 -or !(Test-Path -LiteralPath $html -PathType Leaf) -or (Get-Item -LiteralPath $html).Length -le 0) {
+                throw "Kordoc HTML render failed; .hwp visual cross-check requires an HWP 5.x file supported by Kordoc render"
+              }
+            } else {
+              $svg = Join-Path $work "render.svg"
+              npx --no-install kordoc render "$env:INPUT_PATH" -o "$svg" --silent
+              if ($LASTEXITCODE -ne 0 -or !(Test-Path -LiteralPath $svg -PathType Leaf) -or (Get-Item -LiteralPath $svg).Length -le 0) {
+                throw "Kordoc HWPX render failed"
+              }
+              $htmlLines = @(
+                '<!doctype html>',
+                '<html>',
+                '<head>',
+                '<meta charset="utf-8">',
+                '<style>',
+                '@page { size: A4; margin: 0; }',
+                'html, body { margin: 0; padding: 0; width: 210mm; }',
+                'img { display: block; width: 210mm; height: auto; }',
+                '</style>',
+                '</head>',
+                '<body><img src="render.svg" alt=""></body>',
+                '</html>'
+              )
+              $htmlLines | Set-Content -LiteralPath $html -Encoding utf8
+            }
 
             $candidates = @(
               "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe",
@@ -370,17 +423,38 @@ jobs:
           $ocr = Join-Path $result "ocr.md"
           if (!(Test-Path -LiteralPath $ocr -PathType Leaf)) { throw "ocr.md is missing" }
 
-          $parent = Split-Path -Parent $env:INPUT_PATH
-          $stem = [System.IO.Path]::GetFileNameWithoutExtension($env:INPUT_PATH)
-          $outputDir = Join-Path $parent "extracted"
-          $outputPath = Join-Path $outputDir ($stem + ".oneocr.md")
+          if ([string]::IsNullOrWhiteSpace($env:EXTRACTED_MD_RELATIVE)) {
+            throw "Canonical extracted Markdown path is missing"
+          }
+          $canonicalMd = Join-Path $workspace $env:EXTRACTED_MD_RELATIVE
+          $outputDir = Split-Path -Parent $canonicalMd
+          $baseName = [System.IO.Path]::GetFileNameWithoutExtension($canonicalMd)
+          $outputPath = Join-Path $outputDir ($baseName + ".oneocr.md")
           New-Item -ItemType Directory -Force -Path $outputDir | Out-Null
           Copy-Item -LiteralPath $ocr -Destination $outputPath -Force
+
+          $sourceStem = [System.IO.Path]::GetFileNameWithoutExtension($env:INPUT_PATH)
+          $sourceExt = [System.IO.Path]::GetExtension($env:INPUT_PATH).TrimStart('.').ToLowerInvariant()
+          $alternateSidecars = @(
+            (Join-Path $outputDir ($sourceStem + ".oneocr.md")),
+            (Join-Path $outputDir ($sourceStem + "-" + $sourceExt + ".oneocr.md"))
+          ) | Select-Object -Unique
+          $removedAlternates = @()
+          foreach ($candidate in $alternateSidecars) {
+            if ([System.StringComparer]::OrdinalIgnoreCase.Equals($candidate, $outputPath)) { continue }
+            if (Test-Path -LiteralPath $candidate -PathType Leaf) {
+              Remove-Item -LiteralPath $candidate -Force
+              $removedAlternates += [System.IO.Path]::GetRelativePath($workspace, $candidate).Replace('\', '/')
+            }
+          }
 
           $relative = [System.IO.Path]::GetRelativePath($workspace, $outputPath).Replace('\', '/')
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -- "$relative"
+          foreach ($removed in $removedAlternates) {
+            git add -A -- "$removed"
+          }
           $changed = @(git diff --cached --name-only)
           if ($changed.Count -eq 0) {
             Write-Host "OneOCR Markdown is unchanged: $relative"
