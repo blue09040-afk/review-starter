@@ -6,7 +6,7 @@
     "node": ">=20 <21"
   },
   "dependencies": {
-    "kordoc": "4.13.1"
+    "kordoc": "4.16.0"
   },
   "overrides": {
     "adm-zip": "^0.6.1",
