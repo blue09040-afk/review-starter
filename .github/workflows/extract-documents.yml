@@ -190,6 +190,16 @@ jobs:
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # Empty starter repositories have no extracted files yet. A bare
+          # git add with an unmatched pathspec exits 128, so skip staging then.
+          # Write the NUL-delimited list to a runner temp file so a
+          # git ls-files failure is not hidden inside process substitution.
+          extraction_candidates="$RUNNER_TEMP/extracted-candidates.zlist"
+          git ls-files -z --cached --others --exclude-standard -- ':(glob)**/extracted/*.md' > "$extraction_candidates"
+          if [[ ! -s "$extraction_candidates" ]]; then
+            echo "No extracted Markdown paths to stage."
+            exit 0
+          fi
           git add -A -- ':(glob)**/extracted/*.md'
 
           if git diff --cached --quiet; then
