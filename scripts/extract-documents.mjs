@@ -14,6 +14,11 @@ const IMAGE_EXTS = new Set([".jpg", ".jpeg", ".png"])
 const SKIP_DIRS = new Set([".git", "node_modules", "extracted"])
 const NAME_RESOLVER = path.join(ROOT, ".github", "scripts", "resolve_extracted_name.py")
 
+export const TABLE_LAYOUT_MODE = "visual"
+export function documentParseOptions(extra = {}) {
+  return { layoutTables: TABLE_LAYOUT_MODE, ...extra }
+}
+
 function rel(file) {
   return path.relative(ROOT, file).split(path.sep).join("/")
 }
@@ -86,6 +91,28 @@ function normalizeForDuplicateCheck(text) {
     .trim()
 }
 
+export function isUsefulEmbeddedOcrText(text) {
+  const normalized = normalizeForDuplicateCheck(text)
+  const meaningful = normalized.match(/[\p{L}\p{N}]/gu) ?? []
+  return meaningful.length >= 2
+}
+
+export function shouldIncludeEmbeddedOcrText(text, mainMarkdown) {
+  const normalized = normalizeForDuplicateCheck(text)
+  if (!isUsefulEmbeddedOcrText(text)) return false
+
+  const mainNormalized = normalizeForDuplicateCheck(mainMarkdown)
+  if (normalized.length >= 6 && mainNormalized.includes(normalized)) return false
+  return true
+}
+
+export function embeddedOcrHeading(filename, text) {
+  const name = filename || "image"
+  return normalizeForDuplicateCheck(text).length < 24
+    ? `${name} (짧은 판독·원본 확인 필요)`
+    : name
+}
+
 export function detectSuspiciousOdtText(markdown) {
   const hangul = String(markdown ?? "").match(/[가-힣]/gu) ?? []
   if (hangul.length < 80) return null
@@ -105,7 +132,6 @@ async function ocrEmbeddedImages(parsed, mainMarkdown) {
   const images = parsed.images ?? []
   if (!images.length) return { sections: [], attempted: 0, included: 0, failed: 0 }
 
-  const mainNormalized = normalizeForDuplicateCheck(mainMarkdown)
   const sections = []
   let attempted = 0
   let included = 0
@@ -121,13 +147,9 @@ async function ocrEmbeddedImages(parsed, mainMarkdown) {
       }
 
       const text = imageResult.markdown.trim()
-      const normalized = normalizeForDuplicateCheck(text)
-      if (normalized.length < 2) continue
+      if (!shouldIncludeEmbeddedOcrText(text, mainMarkdown)) continue
 
-      const sample = normalized.slice(0, Math.min(120, normalized.length))
-      if (sample.length >= 24 && mainNormalized.includes(sample)) continue
-
-      sections.push(`### ${image.filename || `image-${attempted}`}\n\n${text}`)
+      sections.push(`### ${embeddedOcrHeading(image.filename || `image-${attempted}`, text)}\n\n${text}`)
       included += 1
     } catch {
       failed += 1
@@ -206,14 +228,14 @@ function failureMarkdown(source, failure) {
 }
 
 async function parsePdfHybrid(source) {
-  const initial = await parse(source)
+  const initial = await parse(source, documentParseOptions({ ocr: false }))
   if (!initial.success) return { parsed: initial, pdfOcrUsed: false }
 
   if (!initial.qualitySummary?.needsOcr) {
     return { parsed: initial, pdfOcrUsed: false }
   }
 
-  const retried = await parse(source, { ocr: true })
+  const retried = await parse(source, documentParseOptions({ ocr: true }))
   if (!retried.success) {
     return {
       parsed: {
@@ -289,6 +311,8 @@ async function convertOne(source) {
       const hybrid = await parseOdtViaDocx(source)
       parsed = hybrid.parsed
       pdfOcrUsed = hybrid.pdfOcrUsed
+    } else if (ext === ".hwp" || ext === ".hwpx") {
+      parsed = await parse(source, documentParseOptions())
     } else {
       parsed = await parse(source)
     }
