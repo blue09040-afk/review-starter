@@ -25,7 +25,7 @@ HWP, HWPX, ODT, PDF, JPG/JPEG/PNG 원자료는 `source/`에 두는 것을 권장
 
 ## 2. 자동 문서 추출
 
-지원 원자료가 `main` 브랜치에 추가·변경되면 `.github/workflows/extract-documents.yml`이 실행되어 `kordoc` 4.13.1을 중심으로 Markdown 파생본을 생성합니다. ODT는 LibreOffice headless로 임시 DOCX로 변환한 뒤 Kordoc DOCX 파서로 직접 읽으며, 한글이 극소수 음절에 비정상적으로 집중되는 결과는 `ODT_TEXT_CORRUPTION` 실패로 차단합니다. ODT가 있을 때만 LibreOffice Writer를 설치합니다.
+지원 원자료가 `main` 브랜치에 추가·변경되면 `.github/workflows/extract-documents.yml`이 실행되어 `kordoc` 4.18.13을 중심으로 Markdown 파생본을 생성합니다. ODT는 LibreOffice headless로 임시 DOCX로 변환한 뒤 Kordoc DOCX 파서로 직접 읽으며, 한글이 극소수 음절에 비정상적으로 집중되는 결과는 `ODT_TEXT_CORRUPTION` 실패로 차단합니다. ODT가 있을 때만 LibreOffice Writer를 설치합니다.
 
 지원 형식과 기본 처리:
 
@@ -40,7 +40,7 @@ HWP, HWPX, ODT, PDF, JPG/JPEG/PNG 원자료는 `source/`에 두는 것을 권장
 
 자동 추출본은 원본을 대체하지 않는 파생자료입니다. 원본과 추출본이 충돌하면 원본을 우선하고, 표 병합·글상자·배치·페이지 경계·이미지·중요 수치가 판단에 영향을 줄 수 있으면 원본을 다시 확인합니다. 자동 추출 Markdown은 수동 편집하지 않고 필요한 보정은 `working/`에 별도 파일로 남깁니다.
 
-추출 스크립트·테스트·의존성·workflow가 바뀌면 Actions에서 `npm test`를 실행하여 ODT 한글 붕괴 방지 회귀 테스트를 포함한 추출 회귀 테스트를 먼저 확인합니다.
+추출 스크립트·테스트·의존성·workflow가 바뀌면 Actions에서 `npm test`를 실행하여 ODT 한글 붕괴 방지 회귀 테스트를 포함한 추출 회귀 테스트를 먼저 확인합니다. 표는 `layoutTables: "visual"`로 레이아웃을 보존하고, PDF는 처음에는 OCR 없이 파싱한 후 `qualitySummary.needsOcr`가 true일 때만 선택적으로 OCR을 수행합니다. 내부 이미지에서 추출된 짧은 정보라도 처리기한·접수정보 등 실무상 의미 있는 문자열이면 길이만으로 폐기하지 않고 원본 확인이 필요함을 표시합니다.
 
 중요 문서이거나 Kordoc 직접 추출의 누락·배치 이상이 의심되면 `.github/workflows/oneocr-cross-check.yml`을 선택적으로 실행하여 OneOCR로 교차검증할 수 있습니다. 입력은 HWP 5.x·HWPX·PDF를 지원합니다. HWP 5.x는 다페이지 HTML 렌더, HWPX는 전체 페이지 SVG 스택을 headless Edge/Chrome에서 PDF로 인쇄한 뒤 OneOCR로 판독합니다. HWP3는 기본 Markdown 자동추출만 지원하고 시각 교차검증 입력에서는 조기에 거부합니다. HWP/HWPX의 `source_markdown`과 OneOCR sidecar는 `.github/scripts/resolve_extracted_name.py`의 정본 파일명 규칙을 사용하므로 동일 stem의 다른 형식이 함께 있어도 확장자 suffix를 유지하며, OneOCR 결과는 기본 자동 추출을 대체하지 않습니다.
 
