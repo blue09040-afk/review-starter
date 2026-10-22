@@ -50,9 +50,10 @@ test("short embedded OCR is retained but clearly marked for source verification"
 })
 
 
-test("long embedded OCR suppresses nearly identical body text with small trailing noise", () => {
+test("long embedded OCR preserves nonidentical trailing text for source verification", () => {
   const shared = "민원 처리 경과와 법령 검토 결과를 담당부서에서 확인하고 안내합니다.".repeat(6)
-  assert.ok(shared.replace(/\\s+/g, "").length > 120)
-  assert.equal(shouldIncludeEmbeddedOcrText(shared + "오", shared), false)
-  assert.equal(shouldIncludeEmbeddedOcrText(shared + "새로운 유효 정보가 포함된 별도의 내용입니다.", shared), true)
+  assert.ok(shared.replace(/\s+/g, "").length > 120)
+  assert.equal(shouldIncludeEmbeddedOcrText(shared, shared), false)
+  assert.equal(shouldIncludeEmbeddedOcrText(shared + "오", shared), true)
+  assert.equal(shouldIncludeEmbeddedOcrText(shared + "처리기한2026.10.21.", shared), true)
 })
