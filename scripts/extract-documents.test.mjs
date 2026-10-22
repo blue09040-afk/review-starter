@@ -48,3 +48,11 @@ test("short embedded OCR is retained but clearly marked for source verification"
   assert.match(embeddedOcrHeading("image_001.png", "처리기한 2026.10.21."), /짧은 판독·원본 확인 필요/)
   assert.equal(embeddedOcrHeading("image_002.png", "현장사진에 표시된 폐기물 적치 위치와 작업일자를 확인합니다."), "image_002.png")
 })
+
+
+test("long embedded OCR suppresses nearly identical body text with small trailing noise", () => {
+  const shared = "민원 처리 경과와 법령 검토 결과를 담당부서에서 확인하고 안내합니다.".repeat(6)
+  assert.ok(shared.replace(/\\s+/g, "").length > 120)
+  assert.equal(shouldIncludeEmbeddedOcrText(shared + "오", shared), false)
+  assert.equal(shouldIncludeEmbeddedOcrText(shared + "새로운 유효 정보가 포함된 별도의 내용입니다.", shared), true)
+})
