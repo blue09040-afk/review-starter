@@ -103,10 +103,6 @@ export function shouldIncludeEmbeddedOcrText(text, mainMarkdown) {
 
   const mainNormalized = normalizeForDuplicateCheck(mainMarkdown)
   if (normalized.length >= 6 && mainNormalized.includes(normalized)) return false
-  // Suppress near-identical long OCR where only a very short trailing fragment differs.
-  // Do not discard an OCR tail large enough to contain additional substantive content.
-  if (normalized.length > 120 && normalized.length - 120 <= 12 &&
-      mainNormalized.includes(normalized.slice(0, 120))) return false
   return true
 }
 
