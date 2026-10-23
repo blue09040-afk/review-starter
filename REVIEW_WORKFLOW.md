@@ -29,11 +29,11 @@ HWP, HWPX, ODT, PDF, JPG/JPEG/PNG 원자료는 `source/`에 두는 것을 권장
 
 지원 형식과 기본 처리:
 
-- HWP: Kordoc HWP3/HWP5 직접 파싱하며 `layoutTables: "visual"` 정책을 명시적으로 사용
+- HWP: Kordoc HWP3/HWP5 직접 파싱하며 `layoutTables: "visual"` 정책을 명시적으로 사용 (Kordoc 계약상 visual 테이블 모드는 HWP5에 적용, HWP3은 해당 없음)
 - HWPX: Kordoc HWPX 직접 파싱하며 `layoutTables: "visual"` 정책을 명시적으로 사용
-- ODT: LibreOffice headless로 임시 DOCX 변환 후 Kordoc DOCX 직접 파싱. Kordoc 4.18.13의 `layoutTables` 정책은 HWPX·HWP5·PDF에 적용되므로 이 DOCX 경로에는 별도 `layoutTables` 보장을 두지 않음. PDF 텍스트층을 거치지 않으며 한글 붕괴 품질검사를 추가 수행
+- ODT: LibreOffice headless로 임시 DOCX 변환 후 Kordoc DOCX 직접 파싱 (내부 DOCX 변환 경로 경유). Kordoc 4.18.13의 `layoutTables` 정책은 HWPX·HWP5·PDF에 적용되므로 이 DOCX 경로에는 별도 `layoutTables` 보장을 두지 않음. PDF 텍스트층을 거치지 않으며 한글 붕괴 품질검사를 추가 수행
 - PDF: 1차 파싱은 `ocr: false`와 `layoutTables: "visual"`을 명시하여 텍스트 레이어를 직접 읽고, `qualitySummary.needsOcr` 품질 신호가 있는 경우에만 `ocr: true`로 다시 읽어 PP-OCRv5를 필요한 페이지에 적용
-- PDF/ODT 내부 이미지: Kordoc이 추출한 내부 이미지를 별도 OCR하고 본문에 이미 존재하는 충분히 긴 중복 판독과 기호성 잡음은 제외. 짧아도 중요한 행정정보(처리기한, 접수번호 등)는 길이만으로 버리지 않고 24자 미만은 `짧은 판독·원본 확인 필요`로 보존
+- PDF/ODT 내부 이미지: Kordoc이 추출한 내부 이미지를 별도 OCR하고 본문에 이미 존재하는 충분히 긴 중복 판독과 기호성 잡음은 제외. 정규화 기준 24자 미만의 짧은 판독(예: 처리기한, 접수번호 등 핵심 행정정보)도 길이만으로 버리지 않고 `짧은 판독·원본 확인 필요`로 보존
 - JPG/JPEG/PNG: PP-OCRv5로 직접 OCR
 
 같은 폴더에 확장자만 다른 동일 원본명이 함께 있으면 모든 충돌 파일에 확장자 suffix를 붙입니다. 파일명 결정 규칙의 정본은 `.github/scripts/resolve_extracted_name.py`입니다.
